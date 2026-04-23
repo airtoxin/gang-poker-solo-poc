@@ -1,3 +1,5 @@
+import { compareHands, evaluateHand } from "./evaluator.ts";
+
 export type Suit = "♠" | "♥" | "♦" | "♣";
 export type Rank = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
 
@@ -99,6 +101,84 @@ const COMMUNITY_COUNT: Record<Round, number> = { 1: 0, 2: 3, 3: 4, 4: 5 };
 export const communityForRound = (dealt: readonly Card[], round: Round): readonly Card[] =>
   dealt.slice(0, COMMUNITY_COUNT[round]);
 
+const cardKey = (c: Card): string => `${c.suit}${c.rank}`;
+
+const seatScore = (seat: Seat, community: readonly Card[]): number[] =>
+  evaluateHand([...seat.holeCards, ...community]);
+
+const rankSeats = (seats: readonly Seat[], community: readonly Card[]): Map<SeatId, Placement> => {
+  const entries = seats.map((s, idx) => ({ id: s.id, idx, score: seatScore(s, community) }));
+  entries.sort((a, b) => {
+    const cmp = compareHands(b.score, a.score);
+    if (cmp !== 0) return cmp;
+    return a.idx - b.idx;
+  });
+  return new Map(entries.map((e, i) => [e.id, (i + 1) as Placement]));
+};
+
+const PROJECTION_SAMPLES = 80;
+
+const projectRanking = (state: GameState): Map<SeatId, Placement> => {
+  const need = 5 - state.community.length;
+  if (need === 0) return rankSeats(state.seats, state.community);
+
+  const used = new Set<string>();
+  for (const s of state.seats) for (const c of s.holeCards) used.add(cardKey(c));
+  for (const c of state.community) used.add(cardKey(c));
+  const remaining = createDeck().filter((c) => !used.has(cardKey(c)));
+
+  const sums = new Map<SeatId, number>();
+  for (const s of state.seats) sums.set(s.id, 0);
+
+  for (let i = 0; i < PROJECTION_SAMPLES; i++) {
+    const sampled = shuffle(remaining).slice(0, need);
+    const future = [...state.community, ...sampled];
+    const ranking = rankSeats(state.seats, future);
+    for (const [id, placement] of ranking) {
+      sums.set(id, sums.get(id)! + placement);
+    }
+  }
+
+  const ordered = state.seats
+    .map((s, idx) => ({ id: s.id, idx, avg: sums.get(s.id)! / PROJECTION_SAMPLES }))
+    .sort((a, b) => {
+      if (a.avg !== b.avg) return a.avg - b.avg;
+      return a.idx - b.idx;
+    });
+  return new Map(ordered.map((e, i) => [e.id, (i + 1) as Placement]));
+};
+
+const clampPlacement = (n: number): Placement => {
+  const x = Math.round(n);
+  if (x < 1) return 1;
+  if (x > 4) return 4;
+  return x as Placement;
+};
+
+const declareByPersonality = (
+  op: OpponentSeat,
+  state: GameState,
+  straightRanking: Map<SeatId, Placement>,
+  projectedRanking: Map<SeatId, Placement>,
+): Placement => {
+  const straight = straightRanking.get(op.id)!;
+  switch (op.personality) {
+    case "素直":
+      return straight;
+    case "分析屋":
+      return projectedRanking.get(op.id)!;
+    case "慎重": {
+      const playerBet = state.placements[state.currentRound - 1]?.get(op.id);
+      if (playerBet == null) return straight;
+      const diff = playerBet - straight;
+      if (Math.abs(diff) <= 1) return straight;
+      return clampPlacement(straight + Math.sign(diff));
+    }
+  }
+};
+
+const categoryOf = (score: readonly number[]): number => score[0] ?? 0;
+
 export const createInitialState = (): GameState => {
   const deck = shuffle(createDeck());
   const take = (): Card => deck.shift()!;
@@ -119,10 +199,7 @@ export const createInitialState = (): GameState => {
     take(),
   ];
 
-  const shuffledIds = shuffle(seats.map((s) => s.id));
-  const actualPlacements: RoundPlacements = new Map(
-    shuffledIds.map((id, idx) => [id, (idx + 1) as Placement]),
-  );
+  const actualPlacements: RoundPlacements = rankSeats(seats, dealtCommunity);
 
   return {
     seats,
@@ -178,10 +255,6 @@ export const confirmPlacements = (state: GameState): GameState => {
   };
 };
 
-const randomPlacement = (): Placement => (Math.floor(Math.random() * 4) + 1) as Placement;
-
-const randomTrend = (): HandTrend => (Math.random() < 0.5 ? "+" : "·");
-
 export const startPlacement = (state: GameState): GameState => ({
   ...state,
   roundPhase: "placement",
@@ -191,16 +264,36 @@ export const finishRound = (state: GameState): GameState => {
   if (state.currentRound === TOTAL_ROUNDS) {
     return { ...state, gamePhase: "showdown" };
   }
+
   const opponents = state.seats.filter(isOpponentSeat);
-  const outputs: RoundOutputs = new Map(
-    opponents.map((op) => [
-      op.id,
-      {
-        declared: randomPlacement(),
-        trend: state.currentRound === 1 ? null : randomTrend(),
-      },
-    ]),
+  const straightRanking = rankSeats(state.seats, state.community);
+  const needsProjection = opponents.some((o) => o.personality === "分析屋");
+  const projectedRanking = needsProjection ? projectRanking(state) : straightRanking;
+
+  const currentScores = new Map<SeatId, number[]>(
+    state.seats.map((s) => [s.id, seatScore(s, state.community)]),
   );
+  const prevCommunity =
+    state.currentRound === 1
+      ? null
+      : communityForRound(state.dealtCommunity, (state.currentRound - 1) as Round);
+  const prevScores = prevCommunity
+    ? new Map<SeatId, number[]>(state.seats.map((s) => [s.id, seatScore(s, prevCommunity)]))
+    : null;
+
+  const outputs: RoundOutputs = new Map(
+    opponents.map((op) => {
+      const declared = declareByPersonality(op, state, straightRanking, projectedRanking);
+      const trend: HandTrend | null =
+        prevScores == null
+          ? null
+          : categoryOf(currentScores.get(op.id)!) > categoryOf(prevScores.get(op.id)!)
+            ? "+"
+            : "·";
+      return [op.id, { declared, trend }];
+    }),
+  );
+
   const nextOutputs = state.outputs.slice();
   nextOutputs[state.currentRound - 1] = outputs;
   return { ...state, roundPhase: "feedback", outputs: nextOutputs };
