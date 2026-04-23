@@ -1,178 +1,106 @@
 import "./style.css";
 import {
   type Card,
-  type GameState,
-  HAND_LABEL,
-  MAX_BET,
-  MIN_BET,
-  PAYOUT,
-  PAYOUT_TABLE,
+  CHIP_VALUE,
+  type ChipStack,
+  type Opponent,
+  type Player,
+  chipTotal,
   createInitialState,
-  deal,
-  draw,
   isRed,
-  nextRound,
   rankLabel,
-  restart,
-  setBet,
-  toggleHold,
 } from "./game.ts";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
-let state: GameState = createInitialState();
+const state = createInitialState();
 
-const renderCard = (card: Card | undefined, held: boolean, index: number): string => {
-  if (!card) {
-    return `<div class="slot">
-      <div class="card empty" aria-hidden="true"></div>
-      <span class="hold-label hidden">HOLD</span>
-    </div>`;
-  }
+const renderCardFace = (card: Card): string => {
   const colorClass = isRed(card.suit) ? "red" : "black";
-  const label = `${rankLabel(card.rank)}${card.suit}`;
-  const disabled = state.phase !== "holding";
-  return `<div class="slot">
-    <div
-      class="card ${colorClass} ${held ? "held" : ""}"
-      role="button"
-      tabindex="0"
-      aria-label="${label}${held ? " ホールド中" : ""}"
-      aria-pressed="${held}"
-      aria-disabled="${disabled}"
-      data-index="${index}"
-    >
-      <span class="rank">${rankLabel(card.rank)}${card.suit}</span>
-      <span class="suit-big">${card.suit}</span>
-      <span class="rank bottom">${rankLabel(card.rank)}${card.suit}</span>
-    </div>
-    <span class="hold-label ${held ? "" : "hidden"}">HOLD</span>
+  return `<div class="card face ${colorClass}">
+    <span class="corner tl">${rankLabel(card.rank)}${card.suit}</span>
+    <span class="pip">${card.suit}</span>
+    <span class="corner br">${rankLabel(card.rank)}${card.suit}</span>
   </div>`;
 };
 
-const renderPayouts = (): string => {
-  const highlight = state.phase === "result" ? state.lastResult : null;
-  const rows = PAYOUT_TABLE.map((h) => {
-    const cls = h === highlight ? "row highlight" : "row";
-    return `<div class="${cls}">
-      <span class="hand-name">${HAND_LABEL[h]}</span>
-      <span class="payout">x${PAYOUT[h]}</span>
+const renderCardBack = (): string => `<div class="card back" aria-label="裏向き"></div>`;
+
+const renderCardEmpty = (): string => `<div class="card empty" aria-hidden="true"></div>`;
+
+const renderHoleCards = (cards: readonly [Card, Card] | null, faceDown: boolean): string => {
+  if (!cards) return `${renderCardEmpty()}${renderCardEmpty()}`;
+  if (faceDown) return `${renderCardBack()}${renderCardBack()}`;
+  return `${renderCardFace(cards[0])}${renderCardFace(cards[1])}`;
+};
+
+const CHIP_ORDER: readonly (keyof ChipStack)[] = ["white", "yellow", "orange", "red"];
+
+const renderChips = (chips: ChipStack): string => {
+  const stacks = CHIP_ORDER.map((color) => {
+    const count = chips[color];
+    return `<div class="chip chip-${color}" title="${CHIP_VALUE[color]} × ${count}">
+      <span>${count}</span>
     </div>`;
   }).join("");
-  return `<div class="payouts" aria-label="配当表">${rows}</div>`;
+  return `<div class="chips" aria-label="チップ: ${chipTotal(chips)}">${stacks}</div>`;
 };
 
-const statusText = (): { text: string; win: boolean } => {
-  switch (state.phase) {
-    case "betting":
-      return { text: "ベットを決めて DEAL を押してください", win: false };
-    case "holding":
-      return { text: "残すカードをクリックして DRAW を押してください", win: false };
-    case "result": {
-      if (state.lastResult && state.lastWin > 0) {
-        return { text: `${HAND_LABEL[state.lastResult]} — +${state.lastWin}`, win: true };
-      }
-      return { text: "役なし", win: false };
-    }
-    case "gameover":
-      return { text: "GAME OVER — クレジットが尽きました", win: false };
-  }
+const renderOpponent = (op: Opponent): string => {
+  return `<section class="opponent ${op.folded ? "folded" : ""}" aria-label="対戦相手">
+    <header class="seat-label">性格: <strong>${op.personality}</strong></header>
+    <div class="seat-row">
+      <div class="hole">${renderHoleCards(op.holeCards, true)}</div>
+      ${renderChips(op.chips)}
+    </div>
+  </section>`;
 };
 
-const renderControls = (): string => {
-  if (state.phase === "betting") {
-    const canDeal = state.credits >= state.bet;
-    return `<div class="controls">
-      <div class="bet-group">
-        <button class="btn secondary" data-action="bet-down" ${state.bet <= MIN_BET ? "disabled" : ""}>−</button>
-        <span class="bet-value">BET: ${state.bet}</span>
-        <button class="btn secondary" data-action="bet-up" ${state.bet >= Math.min(MAX_BET, state.credits) ? "disabled" : ""}>+</button>
-        <button class="btn secondary" data-action="bet-max" ${state.credits < MAX_BET ? "disabled" : ""}>MAX</button>
-      </div>
-      <button class="btn" data-action="deal" ${canDeal ? "" : "disabled"}>DEAL</button>
-    </div>`;
+const renderCommunity = (community: readonly Card[]): string => {
+  const slots: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const card = community[i];
+    slots.push(card ? renderCardFace(card) : renderCardEmpty());
   }
-  if (state.phase === "holding") {
-    return `<div class="controls">
-      <button class="btn" data-action="draw">DRAW</button>
-    </div>`;
-  }
-  if (state.phase === "result") {
-    return `<div class="controls">
-      <button class="btn" data-action="next">NEXT</button>
-    </div>`;
-  }
-  return `<div class="controls">
-    <button class="btn" data-action="restart">RESTART</button>
-  </div>`;
+  return `<section class="community" aria-label="コミュニティカード">
+    <div class="board">${slots.join("")}</div>
+    <div class="pot">POT<strong>${state.pot}</strong></div>
+  </section>`;
+};
+
+const renderPlayer = (player: Player): string => {
+  return `<section class="player-area" aria-label="あなた">
+    ${renderChips(player.chips)}
+    <div class="hole player-hole">${renderHoleCards(player.holeCards, false)}</div>
+    <div class="seat-label you">YOU</div>
+  </section>`;
+};
+
+const renderActions = (): string => {
+  return `<section class="actions" aria-label="アクション">
+    <button class="btn danger" data-action="fold">FOLD</button>
+    <button class="btn" data-action="check">CHECK</button>
+    <button class="btn" data-action="call">CALL</button>
+    <button class="btn primary" data-action="raise">RAISE</button>
+  </section>`;
 };
 
 const render = () => {
-  const status = statusText();
-  const hand = state.phase === "betting" ? Array<Card | undefined>(5).fill(undefined) : state.hand;
-  const cardsHtml = hand.map((c, i) => renderCard(c, state.held[i] ?? false, i)).join("");
-  root.innerHTML = `<div class="game">
-    <header class="header">
-      <h1 class="title">Solo Video Poker</h1>
-      <div class="meta">
-        <span>BET<strong>${state.bet}</strong></span>
-        <span>CREDITS<strong>${state.credits}</strong></span>
-      </div>
+  root.innerHTML = `<main class="table">
+    <header class="table-header">
+      <h1>Gang Poker <span class="subtitle">Solo Texas Hold'em</span></h1>
+      <div class="street">STREET<strong>${state.street.toUpperCase()}</strong></div>
     </header>
-    ${renderPayouts()}
-    <div class="status ${status.win ? "win" : ""}" aria-live="polite">${status.text}</div>
-    <div class="hand" role="group" aria-label="手札">${cardsHtml}</div>
-    ${renderControls()}
-    <div class="footer">Jacks or Better — カードをクリックでホールド</div>
-  </div>`;
-  attachListeners();
-};
-
-const attachListeners = () => {
-  root.querySelectorAll<HTMLElement>(".card[role='button']").forEach((el) => {
-    const idx = Number(el.dataset.index);
-    const handle = () => {
-      if (state.phase !== "holding") return;
-      state = toggleHold(state, idx);
-      render();
-    };
-    el.addEventListener("click", handle);
-    el.addEventListener("keydown", (e) => {
-      if (e.key === " " || e.key === "Enter") {
-        e.preventDefault();
-        handle();
-      }
-    });
-  });
-
-  root.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((el) => {
-    el.addEventListener("click", () => {
-      const action = el.dataset.action;
-      switch (action) {
-        case "bet-down":
-          state = setBet(state, state.bet - 1);
-          break;
-        case "bet-up":
-          state = setBet(state, state.bet + 1);
-          break;
-        case "bet-max":
-          state = setBet(state, MAX_BET);
-          break;
-        case "deal":
-          state = deal(state);
-          break;
-        case "draw":
-          state = draw(state);
-          break;
-        case "next":
-          state = nextRound(state);
-          break;
-        case "restart":
-          state = restart();
-          break;
-      }
-      render();
-    });
-  });
+    <div class="table-grid">
+      <div class="opponents">
+        ${state.opponents.map(renderOpponent).join("")}
+      </div>
+      <div class="center">
+        ${renderCommunity(state.community)}
+        ${renderPlayer(state.player)}
+      </div>
+    </div>
+    ${renderActions()}
+  </main>`;
 };
 
 render();
