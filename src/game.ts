@@ -51,82 +51,82 @@ export const ROUND_STREET: Record<Round, string> = {
   4: "リバー",
 };
 
-export type OpponentRoundData = {
-  readonly placement: Placement | null;
-  readonly declared: Placement | null;
+export type OpponentSeatId = "op1" | "op2" | "op3";
+export type SeatId = OpponentSeatId | "player";
+
+export type OpponentSeat = {
+  readonly id: OpponentSeatId;
+  readonly personality: Personality;
+  readonly holeCards: readonly [Card, Card];
+};
+
+export type PlayerSeat = {
+  readonly id: "player";
+  readonly holeCards: readonly [Card, Card];
+};
+
+export type Seat = OpponentSeat | PlayerSeat;
+
+export type OpponentOutput = {
+  readonly declared: Placement;
   readonly trend: HandTrend | null;
 };
 
-export type PlayerRoundData = {
-  readonly placement: Placement | null;
-};
+export type RoundPlacements = ReadonlyMap<SeatId, Placement>;
+export type RoundOutputs = ReadonlyMap<OpponentSeatId, OpponentOutput>;
 
-export type Opponent = {
-  readonly id: string;
-  readonly personality: Personality;
-  readonly holeCards: readonly [Card, Card];
-  readonly rounds: readonly OpponentRoundData[];
-};
-
-export type Player = {
-  readonly holeCards: readonly [Card, Card];
-  readonly rounds: readonly PlayerRoundData[];
-};
+export type RoundPhase = "placement" | "dealing" | "feedback" | "complete";
+export type GamePhase = "in_progress" | "showdown" | "finished";
 
 export type GameState = {
-  readonly opponents: readonly Opponent[];
-  readonly player: Player;
+  readonly seats: readonly Seat[];
   readonly community: readonly Card[];
   readonly currentRound: Round;
+  readonly roundPhase: RoundPhase;
+  readonly gamePhase: GamePhase;
+  readonly placements: readonly (RoundPlacements | null)[];
+  readonly outputs: readonly (RoundOutputs | null)[];
+  readonly pendingPlacements: Readonly<Partial<Record<SeatId, Placement>>>;
 };
 
-const emptyOpponentRounds = (): readonly OpponentRoundData[] =>
-  Array.from({ length: TOTAL_ROUNDS }, () => ({
-    placement: null,
-    declared: null,
-    trend: null,
-  }));
-
-const emptyPlayerRounds = (): readonly PlayerRoundData[] =>
-  Array.from({ length: TOTAL_ROUNDS }, () => ({ placement: null }));
+export const isOpponentSeat = (seat: Seat): seat is OpponentSeat => seat.id !== "player";
 
 export const createInitialState = (): GameState => {
   const deck = shuffle(createDeck());
   const take = (): Card => deck.shift()!;
-  const pair = (): [Card, Card] => [take(), take()];
+  const pair = (): readonly [Card, Card] => [take(), take()];
 
-  const fill = <T>(base: T[], entry: T, idx: number): T[] => {
-    const copy = base.slice();
-    copy[idx] = entry;
-    return copy;
-  };
+  const seats: readonly Seat[] = [
+    { id: "op1", personality: "素直", holeCards: pair() },
+    { id: "op2", personality: "分析屋", holeCards: pair() },
+    { id: "op3", personality: "慎重", holeCards: pair() },
+    { id: "player", holeCards: pair() },
+  ];
+
+  const round1Placements: RoundPlacements = new Map<SeatId, Placement>([
+    ["op1", 2],
+    ["op2", 4],
+    ["op3", 3],
+    ["player", 1],
+  ]);
+
+  const round1Outputs: RoundOutputs = new Map<OpponentSeatId, OpponentOutput>([
+    ["op1", { declared: 1, trend: null }],
+    ["op2", { declared: 3, trend: null }],
+    ["op3", { declared: 4, trend: null }],
+  ]);
+
+  const placements: readonly (RoundPlacements | null)[] = [round1Placements, null, null, null];
+  const outputs: readonly (RoundOutputs | null)[] = [round1Outputs, null, null, null];
 
   return {
-    opponents: [
-      {
-        id: "op1",
-        personality: "素直",
-        holeCards: pair(),
-        rounds: fill(emptyOpponentRounds().slice(), { placement: 2, declared: 1, trend: null }, 0),
-      },
-      {
-        id: "op2",
-        personality: "分析屋",
-        holeCards: pair(),
-        rounds: fill(emptyOpponentRounds().slice(), { placement: 4, declared: 3, trend: null }, 0),
-      },
-      {
-        id: "op3",
-        personality: "慎重",
-        holeCards: pair(),
-        rounds: fill(emptyOpponentRounds().slice(), { placement: 3, declared: 4, trend: null }, 0),
-      },
-    ],
-    player: {
-      holeCards: pair(),
-      rounds: fill(emptyPlayerRounds().slice(), { placement: 1 }, 0),
-    },
+    seats,
     community: [],
     currentRound: 1,
+    roundPhase: "complete",
+    gamePhase: "in_progress",
+    placements,
+    outputs,
+    pendingPlacements: {},
   };
 };
