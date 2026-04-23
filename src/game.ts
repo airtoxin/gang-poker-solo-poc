@@ -38,84 +38,95 @@ export const shuffle = <T>(arr: readonly T[]): T[] => {
 };
 
 export type Personality = "素直" | "分析屋" | "慎重";
+export type Round = 1 | 2 | 3 | 4;
+export type Placement = 1 | 2 | 3 | 4;
+export type HandTrend = "+" | "·";
 
-export type ChipStack = {
-  readonly white: number;
-  readonly yellow: number;
-  readonly orange: number;
-  readonly red: number;
+export const TOTAL_ROUNDS = 4;
+
+export const ROUND_STREET: Record<Round, string> = {
+  1: "プリフロップ",
+  2: "フロップ",
+  3: "ターン",
+  4: "リバー",
 };
 
-export const CHIP_VALUE: Record<keyof ChipStack, number> = {
-  white: 1,
-  yellow: 5,
-  orange: 25,
-  red: 100,
+export type OpponentRoundData = {
+  readonly placement: Placement | null;
+  readonly declared: Placement | null;
+  readonly trend: HandTrend | null;
 };
 
-export const chipTotal = (s: ChipStack): number =>
-  s.white * CHIP_VALUE.white +
-  s.yellow * CHIP_VALUE.yellow +
-  s.orange * CHIP_VALUE.orange +
-  s.red * CHIP_VALUE.red;
+export type PlayerRoundData = {
+  readonly placement: Placement | null;
+};
 
 export type Opponent = {
   readonly id: string;
   readonly personality: Personality;
-  readonly holeCards: readonly [Card, Card] | null;
-  readonly chips: ChipStack;
-  readonly folded: boolean;
+  readonly holeCards: readonly [Card, Card];
+  readonly rounds: readonly OpponentRoundData[];
 };
 
 export type Player = {
-  readonly holeCards: readonly [Card, Card] | null;
-  readonly chips: ChipStack;
+  readonly holeCards: readonly [Card, Card];
+  readonly rounds: readonly PlayerRoundData[];
 };
-
-export type Street = "preflop" | "flop" | "turn" | "river" | "showdown";
 
 export type GameState = {
   readonly opponents: readonly Opponent[];
   readonly player: Player;
   readonly community: readonly Card[];
-  readonly pot: number;
-  readonly street: Street;
+  readonly currentRound: Round;
 };
+
+const emptyOpponentRounds = (): readonly OpponentRoundData[] =>
+  Array.from({ length: TOTAL_ROUNDS }, () => ({
+    placement: null,
+    declared: null,
+    trend: null,
+  }));
+
+const emptyPlayerRounds = (): readonly PlayerRoundData[] =>
+  Array.from({ length: TOTAL_ROUNDS }, () => ({ placement: null }));
 
 export const createInitialState = (): GameState => {
   const deck = shuffle(createDeck());
   const take = (): Card => deck.shift()!;
   const pair = (): [Card, Card] => [take(), take()];
+
+  const fill = <T>(base: T[], entry: T, idx: number): T[] => {
+    const copy = base.slice();
+    copy[idx] = entry;
+    return copy;
+  };
+
   return {
     opponents: [
       {
         id: "op1",
         personality: "素直",
         holeCards: pair(),
-        chips: { white: 3, yellow: 1, orange: 1, red: 4 },
-        folded: false,
+        rounds: fill(emptyOpponentRounds().slice(), { placement: 2, declared: 1, trend: null }, 0),
       },
       {
         id: "op2",
         personality: "分析屋",
         holeCards: pair(),
-        chips: { white: 1, yellow: 4, orange: 4, red: 1 },
-        folded: false,
+        rounds: fill(emptyOpponentRounds().slice(), { placement: 4, declared: 3, trend: null }, 0),
       },
       {
         id: "op3",
         personality: "慎重",
         holeCards: pair(),
-        chips: { white: 2, yellow: 3, orange: 3, red: 3 },
-        folded: false,
+        rounds: fill(emptyOpponentRounds().slice(), { placement: 3, declared: 4, trend: null }, 0),
       },
     ],
     player: {
       holeCards: pair(),
-      chips: { white: 4, yellow: 2, orange: 2, red: 2 },
+      rounds: fill(emptyPlayerRounds().slice(), { placement: 1 }, 0),
     },
     community: [],
-    pot: 0,
-    street: "preflop",
+    currentRound: 1,
   };
 };
