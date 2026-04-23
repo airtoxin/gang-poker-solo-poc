@@ -4,6 +4,7 @@ import {
   type Card,
   confirmPlacements,
   createInitialState,
+  finishRound,
   type GameState,
   isOpponentSeat,
   isPendingComplete,
@@ -17,7 +18,6 @@ import {
   type RoundOutputs,
   type RoundPhase,
   type RoundPlacements,
-  runFeedback,
   type Seat,
   type SeatId,
   startPlacement,
@@ -93,27 +93,29 @@ const OpponentTrack = ({
       const output = seatId === "player" ? null : (outputs[i]?.get(seatId) ?? null);
       return (
         <div className="round-cell" data-round={round} key={round}>
-          <div className="feedback">
-            {output == null ? (
-              <span className="fb-empty" aria-hidden="true">
-                —
-              </span>
-            ) : (
-              <span className="fb-declared" aria-label={`宣言順位 ${output.declared}`}>
-                {output.declared}
-              </span>
-            )}
-            {output == null || output.trend == null ? (
-              <span className="fb-trend empty" aria-hidden="true" />
-            ) : (
-              <span
-                className={`fb-trend ${output.trend === "+" ? "up" : "flat"}`}
-                aria-label={`役の変化 ${output.trend}`}
-              >
-                {output.trend}
-              </span>
-            )}
-          </div>
+          {round < TOTAL_ROUNDS && (
+            <div className="feedback">
+              {output == null ? (
+                <span className="fb-empty" aria-hidden="true">
+                  —
+                </span>
+              ) : (
+                <span className="fb-declared" aria-label={`宣言順位 ${output.declared}`}>
+                  {output.declared}
+                </span>
+              )}
+              {output == null || output.trend == null ? (
+                <span className="fb-trend empty" aria-hidden="true" />
+              ) : (
+                <span
+                  className={`fb-trend ${output.trend === "+" ? "up" : "flat"}`}
+                  aria-label={`役の変化 ${output.trend}`}
+                >
+                  {output.trend}
+                </span>
+              )}
+            </div>
+          )}
           {placement == null ? (
             <div className={`chip empty ${chipClass}`} aria-label={`ラウンド${round} 未配分`} />
           ) : (
@@ -325,10 +327,10 @@ export const App = () => {
         if (s.gamePhase !== "in_progress") return s;
         switch (s.roundPhase) {
           case "dealing":
-            return runFeedback(s);
-          case "feedback":
             return startPlacement(s);
           case "complete":
+            return finishRound(s);
+          case "feedback":
             return advance(s);
           default:
             return s;

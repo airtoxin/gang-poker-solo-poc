@@ -297,6 +297,10 @@ body {
   gap: 4px;
 }
 
+.round-cell > .chip {
+  grid-row: 2;
+}
+
 .chip {
   width: 30px;
   height: 30px;

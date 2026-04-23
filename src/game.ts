@@ -182,7 +182,15 @@ const randomPlacement = (): Placement => (Math.floor(Math.random() * 4) + 1) as 
 
 const randomTrend = (): HandTrend => (Math.random() < 0.5 ? "+" : "·");
 
-export const runFeedback = (state: GameState): GameState => {
+export const startPlacement = (state: GameState): GameState => ({
+  ...state,
+  roundPhase: "placement",
+});
+
+export const finishRound = (state: GameState): GameState => {
+  if (state.currentRound === TOTAL_ROUNDS) {
+    return { ...state, gamePhase: "showdown" };
+  }
   const opponents = state.seats.filter(isOpponentSeat);
   const outputs: RoundOutputs = new Map(
     opponents.map((op) => [
@@ -198,15 +206,7 @@ export const runFeedback = (state: GameState): GameState => {
   return { ...state, roundPhase: "feedback", outputs: nextOutputs };
 };
 
-export const startPlacement = (state: GameState): GameState => ({
-  ...state,
-  roundPhase: "placement",
-});
-
 export const advance = (state: GameState): GameState => {
-  if (state.currentRound === TOTAL_ROUNDS) {
-    return { ...state, gamePhase: "showdown" };
-  }
   const nextRound = (state.currentRound + 1) as Round;
   return {
     ...state,
