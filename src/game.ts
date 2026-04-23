@@ -129,7 +129,7 @@ export const createInitialState = (): GameState => {
     dealtCommunity,
     community: [],
     currentRound: 1,
-    roundPhase: "placement",
+    roundPhase: "dealing",
     gamePhase: "in_progress",
     placements: [null, null, null, null],
     outputs: [null, null, null, null],
@@ -174,8 +174,7 @@ export const confirmPlacements = (state: GameState): GameState => {
     ...state,
     placements,
     pendingPlacements: {},
-    roundPhase: "dealing",
-    community: communityForRound(state.dealtCommunity, state.currentRound),
+    roundPhase: "complete",
   };
 };
 
@@ -199,19 +198,21 @@ export const runFeedback = (state: GameState): GameState => {
   return { ...state, roundPhase: "feedback", outputs: nextOutputs };
 };
 
-export const completeRound = (state: GameState): GameState => ({
+export const startPlacement = (state: GameState): GameState => ({
   ...state,
-  roundPhase: "complete",
+  roundPhase: "placement",
 });
 
 export const advance = (state: GameState): GameState => {
   if (state.currentRound === TOTAL_ROUNDS) {
     return { ...state, gamePhase: "showdown" };
   }
+  const nextRound = (state.currentRound + 1) as Round;
   return {
     ...state,
-    currentRound: (state.currentRound + 1) as Round,
-    roundPhase: "placement",
+    currentRound: nextRound,
+    roundPhase: "dealing",
+    community: communityForRound(state.dealtCommunity, nextRound),
     pendingPlacements: {},
   };
 };

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import {
   advance,
   type Card,
-  completeRound,
   confirmPlacements,
   createInitialState,
   type GameState,
@@ -21,6 +20,7 @@ import {
   runFeedback,
   type Seat,
   type SeatId,
+  startPlacement,
   togglePendingPlacement,
   TOTAL_ROUNDS,
 } from "./game.ts";
@@ -327,7 +327,7 @@ export const App = () => {
           case "dealing":
             return runFeedback(s);
           case "feedback":
-            return completeRound(s);
+            return startPlacement(s);
           case "complete":
             return advance(s);
           default:
