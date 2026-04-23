@@ -69,6 +69,7 @@ const makeState = (over: Partial<GameState> = {}): GameState => {
       ["player", 3],
       ["op2", 4],
     ]),
+    tiebreak: { op1: 0, op2: 1, op3: 2, player: 3 },
   };
   return { ...base, ...over };
 };
@@ -394,6 +395,119 @@ describe("finishRound: personality — 慎重 (shifts toward player bet when div
     const next = finishRound(s);
     const op3Out = next.outputs[0]!.get("op3")!;
     expect(op3Out.declared).toBe(2);
+  });
+});
+
+describe("rankSeats: tiebreak with shared community hand", () => {
+  test("when board straight flush dominates, hole card values break the tie strictly", () => {
+    // Community is a straight flush 3D-7D. None of the hole cards below can
+    // extend it (no 2D/8D) or form anything stronger, so every player's
+    // best-5 is the identical community straight flush. The winning order
+    // must therefore fall back to hole-card magnitude (desc).
+    const seats: readonly Seat[] = [
+      { id: "op1", personality: "素直", holeCards: [card("AS"), card("AH")] },
+      { id: "op2", personality: "分析屋", holeCards: [card("KS"), card("QS")] },
+      { id: "op3", personality: "慎重", holeCards: [card("JC"), card("TH")] },
+      { id: "player", holeCards: [card("9C"), card("9H")] },
+    ];
+    const dealtCommunity: readonly [Card, Card, Card, Card, Card] = [
+      card("3D"),
+      card("4D"),
+      card("5D"),
+      card("6D"),
+      card("7D"),
+    ];
+    // Use a tiebreak that would *invert* seat order if it were consulted;
+    // the assertion below only passes when hole-card comparison does the work.
+    const s = makeState({
+      seats,
+      dealtCommunity,
+      currentRound: 3,
+      community: [card("3D"), card("4D"), card("5D"), card("6D"), card("7D")],
+      tiebreak: { op1: 3, op2: 2, op3: 1, player: 0 },
+      placements: [
+        new Map<SeatId, Placement>([
+          ["op1", 1],
+          ["op2", 2],
+          ["op3", 3],
+          ["player", 4],
+        ]),
+        new Map<SeatId, Placement>([
+          ["op1", 1],
+          ["op2", 2],
+          ["op3", 3],
+          ["player", 4],
+        ]),
+        null,
+        null,
+      ],
+    });
+    const next = finishRound(s);
+    // 素直 reports the hand-strength rank. Hole values desc:
+    //   op1 AA    → [14, 14]
+    //   op2 KQ    → [13, 12]
+    //   op3 JT    → [11, 10]
+    //   player 99 → [9, 9]
+    // → op1=1, op2=2, op3=3, player=4
+    expect(next.outputs[2]!.get("op1")!.declared).toBe(1);
+    expect(next.outputs[2]!.get("op2")!.declared).toBe(2);
+    expect(next.outputs[2]!.get("op3")!.declared).toBe(3);
+  });
+
+  test("tiebreak field is only consulted when hole cards also tie", () => {
+    // Construct a state where seats' best-5 AND hole-card values are identical,
+    // forcing the random tiebreak to determine order deterministically.
+    // Two-seat test via hole = [A, 2] and [A, 2] with different suits on a
+    // non-pair/non-flush board. Extend to 4 seats with dummy distinct holes
+    // that rank lower so they don't interfere.
+    const seats: readonly Seat[] = [
+      { id: "op1", personality: "素直", holeCards: [card("AS"), card("2H")] },
+      { id: "op2", personality: "分析屋", holeCards: [card("AC"), card("2D")] },
+      { id: "op3", personality: "慎重", holeCards: [card("3S"), card("4S")] },
+      { id: "player", holeCards: [card("5C"), card("6D")] },
+    ];
+    const dealtCommunity: readonly [Card, Card, Card, Card, Card] = [
+      card("9H"),
+      card("TH"),
+      card("JD"),
+      card("QS"),
+      card("7C"),
+    ];
+    // op1 / op2 both: A-high, 2 as lowest. Best-5 uses A + board top 4.
+    // Hole values desc identical: [14, 2].
+    // With tiebreak op1=0, op2=1 → op1 wins.
+    const s1 = makeState({
+      seats,
+      dealtCommunity,
+      currentRound: 3,
+      community: dealtCommunity,
+      tiebreak: { op1: 0, op2: 1, op3: 2, player: 3 },
+      placements: [
+        new Map<SeatId, Placement>([
+          ["op1", 1],
+          ["op2", 2],
+          ["op3", 3],
+          ["player", 4],
+        ]),
+        new Map<SeatId, Placement>([
+          ["op1", 1],
+          ["op2", 2],
+          ["op3", 3],
+          ["player", 4],
+        ]),
+        null,
+        null,
+      ],
+    });
+    const r1 = finishRound(s1).outputs[2]!;
+    expect(r1.get("op1")!.declared).toBe(1);
+    expect(r1.get("op2")!.declared).toBe(2);
+
+    // Flip the tiebreak → outcome flips.
+    const s2 = { ...s1, tiebreak: { op1: 1, op2: 0, op3: 2, player: 3 } };
+    const r2 = finishRound(s2).outputs[2]!;
+    expect(r2.get("op2")!.declared).toBe(1);
+    expect(r2.get("op1")!.declared).toBe(2);
   });
 });
 

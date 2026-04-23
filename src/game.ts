@@ -92,6 +92,7 @@ export type GameState = {
   readonly outputs: readonly (RoundOutputs | null)[];
   readonly pendingPlacements: Readonly<Partial<Record<SeatId, Placement>>>;
   readonly actualPlacements: RoundPlacements;
+  readonly tiebreak: Readonly<Record<SeatId, number>>;
 };
 
 export const isOpponentSeat = (seat: Seat): seat is OpponentSeat => seat.id !== "player";
@@ -106,12 +107,33 @@ const cardKey = (c: Card): string => `${c.suit}${c.rank}`;
 const seatScore = (seat: Seat, community: readonly Card[]): number[] =>
   evaluateHand([...seat.holeCards, ...community]);
 
-const rankSeats = (seats: readonly Seat[], community: readonly Card[]): Map<SeatId, Placement> => {
-  const entries = seats.map((s, idx) => ({ id: s.id, idx, score: seatScore(s, community) }));
+const rankValue = (r: Rank): number => (r === 1 ? 14 : r);
+
+// Full ranking key: the best 5-card hand score, extended with hole card values
+// (desc) so that players whose best 5 ties on the community still get
+// distinguished by what they're holding. Example: if community forms a
+// straight flush that no hole can extend, whoever holds higher cards ranks
+// ahead — no seat-order bias, no coin flip.
+const seatRankingKey = (seat: Seat, community: readonly Card[]): number[] => {
+  const primary = seatScore(seat, community);
+  const holeDesc = seat.holeCards.map((c) => rankValue(c.rank)).sort((a, b) => b - a);
+  return [...primary, ...holeDesc];
+};
+
+const rankSeats = (
+  seats: readonly Seat[],
+  community: readonly Card[],
+  tiebreak: Readonly<Record<SeatId, number>>,
+): Map<SeatId, Placement> => {
+  const entries = seats.map((s) => ({
+    id: s.id,
+    tb: tiebreak[s.id],
+    key: seatRankingKey(s, community),
+  }));
   entries.sort((a, b) => {
-    const cmp = compareHands(b.score, a.score);
+    const cmp = compareHands(b.key, a.key);
     if (cmp !== 0) return cmp;
-    return a.idx - b.idx;
+    return a.tb - b.tb;
   });
   return new Map(entries.map((e, i) => [e.id, (i + 1) as Placement]));
 };
@@ -120,7 +142,7 @@ const PROJECTION_SAMPLES = 80;
 
 const projectRanking = (state: GameState): Map<SeatId, Placement> => {
   const need = 5 - state.community.length;
-  if (need === 0) return rankSeats(state.seats, state.community);
+  if (need === 0) return rankSeats(state.seats, state.community, state.tiebreak);
 
   const used = new Set<string>();
   for (const s of state.seats) for (const c of s.holeCards) used.add(cardKey(c));
@@ -133,17 +155,21 @@ const projectRanking = (state: GameState): Map<SeatId, Placement> => {
   for (let i = 0; i < PROJECTION_SAMPLES; i++) {
     const sampled = shuffle(remaining).slice(0, need);
     const future = [...state.community, ...sampled];
-    const ranking = rankSeats(state.seats, future);
+    const ranking = rankSeats(state.seats, future, state.tiebreak);
     for (const [id, placement] of ranking) {
       sums.set(id, sums.get(id)! + placement);
     }
   }
 
   const ordered = state.seats
-    .map((s, idx) => ({ id: s.id, idx, avg: sums.get(s.id)! / PROJECTION_SAMPLES }))
+    .map((s) => ({
+      id: s.id,
+      tb: state.tiebreak[s.id],
+      avg: sums.get(s.id)! / PROJECTION_SAMPLES,
+    }))
     .sort((a, b) => {
       if (a.avg !== b.avg) return a.avg - b.avg;
-      return a.idx - b.idx;
+      return a.tb - b.tb;
     });
   return new Map(ordered.map((e, i) => [e.id, (i + 1) as Placement]));
 };
@@ -199,7 +225,18 @@ export const createInitialState = (): GameState => {
     take(),
   ];
 
-  const actualPlacements: RoundPlacements = rankSeats(seats, dealtCommunity);
+  const tiebreakOrder = shuffle(seats.map((s) => s.id));
+  const tiebreak: Record<SeatId, number> = {
+    op1: 0,
+    op2: 0,
+    op3: 0,
+    player: 0,
+  };
+  tiebreakOrder.forEach((id, idx) => {
+    tiebreak[id] = idx;
+  });
+
+  const actualPlacements: RoundPlacements = rankSeats(seats, dealtCommunity, tiebreak);
 
   return {
     seats,
@@ -212,6 +249,7 @@ export const createInitialState = (): GameState => {
     outputs: [null, null, null, null],
     pendingPlacements: {},
     actualPlacements,
+    tiebreak,
   };
 };
 
@@ -266,7 +304,7 @@ export const finishRound = (state: GameState): GameState => {
   }
 
   const opponents = state.seats.filter(isOpponentSeat);
-  const straightRanking = rankSeats(state.seats, state.community);
+  const straightRanking = rankSeats(state.seats, state.community, state.tiebreak);
   const needsProjection = opponents.some((o) => o.personality === "分析屋");
   const projectedRanking = needsProjection ? projectRanking(state) : straightRanking;
 
