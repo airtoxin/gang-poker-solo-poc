@@ -43,6 +43,7 @@ export type Placement = 1 | 2 | 3 | 4;
 export type HandTrend = "+" | "·";
 
 export const TOTAL_ROUNDS = 4;
+export const PLACEMENTS: readonly Placement[] = [1, 2, 3, 4];
 
 export const ROUND_STREET: Record<Round, string> = {
   1: "プリフロップ",
@@ -76,10 +77,11 @@ export type RoundPlacements = ReadonlyMap<SeatId, Placement>;
 export type RoundOutputs = ReadonlyMap<OpponentSeatId, OpponentOutput>;
 
 export type RoundPhase = "placement" | "dealing" | "feedback" | "complete";
-export type GamePhase = "in_progress" | "showdown" | "finished";
+export type GamePhase = "in_progress" | "showdown";
 
 export type GameState = {
   readonly seats: readonly Seat[];
+  readonly dealtCommunity: readonly [Card, Card, Card, Card, Card];
   readonly community: readonly Card[];
   readonly currentRound: Round;
   readonly roundPhase: RoundPhase;
@@ -87,9 +89,15 @@ export type GameState = {
   readonly placements: readonly (RoundPlacements | null)[];
   readonly outputs: readonly (RoundOutputs | null)[];
   readonly pendingPlacements: Readonly<Partial<Record<SeatId, Placement>>>;
+  readonly actualPlacements: RoundPlacements;
 };
 
 export const isOpponentSeat = (seat: Seat): seat is OpponentSeat => seat.id !== "player";
+
+const COMMUNITY_COUNT: Record<Round, number> = { 1: 0, 2: 3, 3: 4, 4: 5 };
+
+export const communityForRound = (dealt: readonly Card[], round: Round): readonly Card[] =>
+  dealt.slice(0, COMMUNITY_COUNT[round]);
 
 export const createInitialState = (): GameState => {
   const deck = shuffle(createDeck());
@@ -103,30 +111,107 @@ export const createInitialState = (): GameState => {
     { id: "player", holeCards: pair() },
   ];
 
-  const round1Placements: RoundPlacements = new Map<SeatId, Placement>([
-    ["op1", 2],
-    ["op2", 4],
-    ["op3", 3],
-    ["player", 1],
-  ]);
+  const dealtCommunity: readonly [Card, Card, Card, Card, Card] = [
+    take(),
+    take(),
+    take(),
+    take(),
+    take(),
+  ];
 
-  const round1Outputs: RoundOutputs = new Map<OpponentSeatId, OpponentOutput>([
-    ["op1", { declared: 1, trend: null }],
-    ["op2", { declared: 3, trend: null }],
-    ["op3", { declared: 4, trend: null }],
-  ]);
-
-  const placements: readonly (RoundPlacements | null)[] = [round1Placements, null, null, null];
-  const outputs: readonly (RoundOutputs | null)[] = [round1Outputs, null, null, null];
+  const shuffledIds = shuffle(seats.map((s) => s.id));
+  const actualPlacements: RoundPlacements = new Map(
+    shuffledIds.map((id, idx) => [id, (idx + 1) as Placement]),
+  );
 
   return {
     seats,
+    dealtCommunity,
     community: [],
     currentRound: 1,
-    roundPhase: "complete",
+    roundPhase: "placement",
     gamePhase: "in_progress",
+    placements: [null, null, null, null],
+    outputs: [null, null, null, null],
+    pendingPlacements: {},
+    actualPlacements,
+  };
+};
+
+export const togglePendingPlacement = (
+  state: GameState,
+  seatId: SeatId,
+  placement: Placement,
+): GameState => {
+  const next: Partial<Record<SeatId, Placement>> = { ...state.pendingPlacements };
+  for (const id of Object.keys(next) as SeatId[]) {
+    if (next[id] === placement) delete next[id];
+  }
+  next[seatId] = placement;
+  return { ...state, pendingPlacements: next };
+};
+
+export const isPendingComplete = (
+  seats: readonly Seat[],
+  pending: Readonly<Partial<Record<SeatId, Placement>>>,
+): boolean => {
+  const used = new Set<Placement>();
+  for (const seat of seats) {
+    const p = pending[seat.id];
+    if (p == null) return false;
+    used.add(p);
+  }
+  return used.size === seats.length;
+};
+
+export const confirmPlacements = (state: GameState): GameState => {
+  const map = new Map<SeatId, Placement>(
+    Object.entries(state.pendingPlacements) as [SeatId, Placement][],
+  );
+  const placements = state.placements.slice();
+  placements[state.currentRound - 1] = map;
+  return {
+    ...state,
     placements,
-    outputs,
+    pendingPlacements: {},
+    roundPhase: "dealing",
+    community: communityForRound(state.dealtCommunity, state.currentRound),
+  };
+};
+
+const randomPlacement = (): Placement => (Math.floor(Math.random() * 4) + 1) as Placement;
+
+const randomTrend = (): HandTrend => (Math.random() < 0.5 ? "+" : "·");
+
+export const runFeedback = (state: GameState): GameState => {
+  const opponents = state.seats.filter(isOpponentSeat);
+  const outputs: RoundOutputs = new Map(
+    opponents.map((op) => [
+      op.id,
+      {
+        declared: randomPlacement(),
+        trend: state.currentRound === 1 ? null : randomTrend(),
+      },
+    ]),
+  );
+  const nextOutputs = state.outputs.slice();
+  nextOutputs[state.currentRound - 1] = outputs;
+  return { ...state, roundPhase: "feedback", outputs: nextOutputs };
+};
+
+export const completeRound = (state: GameState): GameState => ({
+  ...state,
+  roundPhase: "complete",
+});
+
+export const advance = (state: GameState): GameState => {
+  if (state.currentRound === TOTAL_ROUNDS) {
+    return { ...state, gamePhase: "showdown" };
+  }
+  return {
+    ...state,
+    currentRound: (state.currentRound + 1) as Round,
+    roundPhase: "placement",
     pendingPlacements: {},
   };
 };
