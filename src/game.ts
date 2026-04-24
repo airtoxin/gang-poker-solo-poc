@@ -1,4 +1,4 @@
-import { compareHands, evaluateHand } from "./evaluator.ts";
+import { compareHands, evaluateHand, type HandScore } from "./evaluator.ts";
 
 export type Suit = "♠" | "♥" | "♦" | "♣";
 export type Rank = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
@@ -104,7 +104,7 @@ export const communityForRound = (dealt: readonly Card[], round: Round): readonl
 
 const cardKey = (c: Card): string => `${c.suit}${c.rank}`;
 
-const seatScore = (seat: Seat, community: readonly Card[]): number[] =>
+const seatScore = (seat: Seat, community: readonly Card[]): HandScore =>
   evaluateHand([...seat.holeCards, ...community]);
 
 const rankValue = (r: Rank): number => (r === 1 ? 14 : r);
@@ -114,10 +114,13 @@ const rankValue = (r: Rank): number => (r === 1 ? 14 : r);
 // distinguished by what they're holding. Example: if community forms a
 // straight flush that no hole can extend, whoever holds higher cards ranks
 // ahead — no seat-order bias, no coin flip.
-const seatRankingKey = (seat: Seat, community: readonly Card[]): number[] => {
+const seatRankingKey = (seat: Seat, community: readonly Card[]): HandScore => {
   const primary = seatScore(seat, community);
   const holeDesc = seat.holeCards.map((c) => rankValue(c.rank)).sort((a, b) => b - a);
-  return [...primary, ...holeDesc];
+  return {
+    category: primary.category,
+    tiebreakers: [...primary.tiebreakers, ...holeDesc],
+  };
 };
 
 const rankSeats = (
@@ -203,7 +206,7 @@ const declareByPersonality = (
   }
 };
 
-const categoryOf = (score: readonly number[]): number => score[0] ?? 0;
+const categoryOf = (score: HandScore): number => score.category;
 
 export const createInitialState = (): GameState => {
   const deck = shuffle(createDeck());
@@ -308,7 +311,7 @@ export const finishRound = (state: GameState): GameState => {
   const needsProjection = opponents.some((o) => o.personality === "分析屋");
   const projectedRanking = needsProjection ? projectRanking(state) : straightRanking;
 
-  const currentScores = new Map<SeatId, number[]>(
+  const currentScores = new Map<SeatId, HandScore>(
     state.seats.map((s) => [s.id, seatScore(s, state.community)]),
   );
   const prevCommunity =
@@ -316,7 +319,7 @@ export const finishRound = (state: GameState): GameState => {
       ? null
       : communityForRound(state.dealtCommunity, (state.currentRound - 1) as Round);
   const prevScores = prevCommunity
-    ? new Map<SeatId, number[]>(state.seats.map((s) => [s.id, seatScore(s, prevCommunity)]))
+    ? new Map<SeatId, HandScore>(state.seats.map((s) => [s.id, seatScore(s, prevCommunity)]))
     : null;
 
   const outputs: RoundOutputs = new Map(

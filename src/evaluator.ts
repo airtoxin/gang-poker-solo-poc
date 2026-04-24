@@ -12,9 +12,16 @@ export const HAND_CATEGORY = {
   STRAIGHT_FLUSH: 8,
 } as const;
 
+export type HandCategory = (typeof HAND_CATEGORY)[keyof typeof HAND_CATEGORY];
+
+export type HandScore = {
+  readonly category: HandCategory;
+  readonly tiebreakers: readonly number[];
+};
+
 const toValue = (r: Rank): number => (r === 1 ? 14 : r);
 
-export const compareHands = (a: readonly number[], b: readonly number[]): number => {
+const lexCompare = (a: readonly number[], b: readonly number[]): number => {
   const n = Math.max(a.length, b.length);
   for (let i = 0; i < n; i++) {
     const av = a[i] ?? 0;
@@ -24,7 +31,12 @@ export const compareHands = (a: readonly number[], b: readonly number[]): number
   return 0;
 };
 
-const evaluate5 = (cards: readonly Card[]): number[] => {
+export const compareHands = (a: HandScore, b: HandScore): number => {
+  if (a.category !== b.category) return a.category - b.category;
+  return lexCompare(a.tiebreakers, b.tiebreakers);
+};
+
+const evaluate5 = (cards: readonly Card[]): HandScore => {
   const values = cards.map((c) => toValue(c.rank)).sort((x, y) => y - x);
   const suits = cards.map((c) => c.suit);
   const isFlush = suits.every((s) => s === suits[0]);
@@ -49,26 +61,39 @@ const evaluate5 = (cards: readonly Card[]): number[] => {
   const p0 = byCount[0]!;
   const p1 = byCount[1];
 
-  if (isStraight && isFlush) return [HAND_CATEGORY.STRAIGHT_FLUSH, straightHigh];
-  if (p0[1] === 4) return [HAND_CATEGORY.QUADS, p0[0], p1![0]];
-  if (p0[1] === 3 && p1?.[1] === 2) return [HAND_CATEGORY.FULL_HOUSE, p0[0], p1[0]];
-  if (isFlush) return [HAND_CATEGORY.FLUSH, ...values];
-  if (isStraight) return [HAND_CATEGORY.STRAIGHT, straightHigh];
-  if (p0[1] === 3) return [HAND_CATEGORY.TRIPS, p0[0], byCount[1]![0], byCount[2]![0]];
-  if (p0[1] === 2 && p1?.[1] === 2) return [HAND_CATEGORY.TWO_PAIR, p0[0], p1[0], byCount[2]![0]];
+  if (isStraight && isFlush)
+    return { category: HAND_CATEGORY.STRAIGHT_FLUSH, tiebreakers: [straightHigh] };
+  if (p0[1] === 4) return { category: HAND_CATEGORY.QUADS, tiebreakers: [p0[0], p1![0]] };
+  if (p0[1] === 3 && p1?.[1] === 2)
+    return { category: HAND_CATEGORY.FULL_HOUSE, tiebreakers: [p0[0], p1[0]] };
+  if (isFlush) return { category: HAND_CATEGORY.FLUSH, tiebreakers: values };
+  if (isStraight) return { category: HAND_CATEGORY.STRAIGHT, tiebreakers: [straightHigh] };
+  if (p0[1] === 3)
+    return {
+      category: HAND_CATEGORY.TRIPS,
+      tiebreakers: [p0[0], byCount[1]![0], byCount[2]![0]],
+    };
+  if (p0[1] === 2 && p1?.[1] === 2)
+    return {
+      category: HAND_CATEGORY.TWO_PAIR,
+      tiebreakers: [p0[0], p1[0], byCount[2]![0]],
+    };
   if (p0[1] === 2)
-    return [HAND_CATEGORY.PAIR, p0[0], byCount[1]![0], byCount[2]![0], byCount[3]![0]];
-  return [HAND_CATEGORY.HIGH_CARD, ...values];
+    return {
+      category: HAND_CATEGORY.PAIR,
+      tiebreakers: [p0[0], byCount[1]![0], byCount[2]![0], byCount[3]![0]],
+    };
+  return { category: HAND_CATEGORY.HIGH_CARD, tiebreakers: values };
 };
 
-const bestOf = (cards: readonly Card[]): number[] => {
+const bestOf = (cards: readonly Card[]): HandScore => {
   if (cards.length === 5) return evaluate5(cards);
-  let best: number[] | null = null;
+  let best: HandScore | null = null;
   const combo: Card[] = [];
   const pick = (start: number): void => {
     if (combo.length === 5) {
       const score = evaluate5(combo);
-      if (best == null || compareHands(score, best) > 0) best = [...score];
+      if (best == null || compareHands(score, best) > 0) best = score;
       return;
     }
     const need = 5 - combo.length;
@@ -82,15 +107,39 @@ const bestOf = (cards: readonly Card[]): number[] => {
   return best!;
 };
 
-const evaluatePartial = (cards: readonly Card[]): number[] => {
+// 0-4 card inputs: detect pair/trips/quads/two-pair with kickers. Straights,
+// flushes, full houses and straight flushes require 5 cards so are never
+// possible here. Kickers use whatever cards remain.
+const evaluatePartial = (cards: readonly Card[]): HandScore => {
   const values = cards.map((c) => toValue(c.rank)).sort((a, b) => b - a);
-  if (values.length >= 2 && values[0] === values[1]) {
-    return [HAND_CATEGORY.PAIR, values[0]!];
+  if (values.length === 0) return { category: HAND_CATEGORY.HIGH_CARD, tiebreakers: [] };
+
+  const counts = new Map<number, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  const byCount = [...counts.entries()].sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return b[0] - a[0];
+  });
+  const primary = byCount[0]!;
+  const kickers = byCount.slice(1).map((e) => e[0]);
+
+  if (primary[1] === 4)
+    return { category: HAND_CATEGORY.QUADS, tiebreakers: [primary[0], ...kickers] };
+  if (primary[1] === 3)
+    return { category: HAND_CATEGORY.TRIPS, tiebreakers: [primary[0], ...kickers] };
+  if (primary[1] === 2 && byCount[1]?.[1] === 2) {
+    const extra = byCount.slice(2).map((e) => e[0]);
+    return {
+      category: HAND_CATEGORY.TWO_PAIR,
+      tiebreakers: [primary[0], byCount[1]![0], ...extra],
+    };
   }
-  return [HAND_CATEGORY.HIGH_CARD, ...values];
+  if (primary[1] === 2)
+    return { category: HAND_CATEGORY.PAIR, tiebreakers: [primary[0], ...kickers] };
+  return { category: HAND_CATEGORY.HIGH_CARD, tiebreakers: values };
 };
 
-export const evaluateHand = (cards: readonly Card[]): number[] => {
+export const evaluateHand = (cards: readonly Card[]): HandScore => {
   if (cards.length < 5) return evaluatePartial(cards);
   return bestOf(cards);
 };
